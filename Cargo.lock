@@ -3582,6 +3582,7 @@ dependencies = [
  "gstreamer-video",
  "libc",
  "num_cpus",
+ "pkg-config",
  "quest",
  "repng",
  "serde 1.0.136",
