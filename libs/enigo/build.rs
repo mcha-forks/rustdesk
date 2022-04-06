@@ -1,9 +1,3 @@
-#[cfg(target_os = "windows")]
-fn main() {}
-
-#[cfg(target_os = "macos")]
-fn main() {}
-
 #[cfg(target_os = "linux")]
 use pkg_config;
 #[cfg(target_os = "linux")]
@@ -52,10 +46,5 @@ fn main() {
     let mut f = File::create(&dest_path).unwrap();
     f.write_all(&config.into_bytes()).unwrap();
 
-    let target = env::var("TARGET").unwrap();
-    if target.contains("linux") {
-        println!("cargo:rustc-link-lib=dl");
-    } else if target.contains("freebsd") || target.contains("dragonfly") {
-        println!("cargo:rustc-link-lib=c");
-    }
+    println!("cargo:rustc-link-lib=dl");
 }

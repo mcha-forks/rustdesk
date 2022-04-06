@@ -1,13 +1,6 @@
-#[cfg(windows)]
-use crate::clipboard_file::*;
 use crate::{
     client::*,
     common::{self, check_clipboard, update_clipboard, ClipboardContext, CLIPBOARD_INTERVAL},
-};
-#[cfg(windows)]
-use clipboard::{
-    cliprdr::CliprdrClientContext, create_cliprdr_context as create_clipboard_file_context,
-    get_rx_clip_client, server_clip_file,
 };
 use enigo::{self, Enigo, KeyboardControllable};
 use hbb_common::{
@@ -60,8 +53,6 @@ static mut KEYBOARD_HOOKED: bool = false;
 static mut SERVER_KEYBOARD_ENABLED: bool = true;
 static mut SERVER_FILE_TRANSFER_ENABLED: bool = true;
 static mut SERVER_CLIPBOARD_ENABLED: bool = true;
-#[cfg(windows)]
-static mut IS_ALT_GR: bool = false;
 
 #[derive(Default)]
 pub struct HandlerInner {
@@ -256,23 +247,7 @@ impl Handler {
                     _ => return,
                 };
                 let alt = get_key_state(enigo::Key::Alt);
-                #[cfg(windows)]
-                let ctrl = {
-                    let mut tmp = get_key_state(enigo::Key::Control);
-                    unsafe {
-                        if IS_ALT_GR {
-                            if alt || key == Key::AltGr {
-                                if tmp {
-                                    tmp = false;
-                                }
-                            } else {
-                                IS_ALT_GR = false;
-                            }
-                        }
-                    }
-                    tmp
-                };
-                #[cfg(not(windows))]
+
                 let ctrl = get_key_state(enigo::Key::Control);
                 let shift = get_key_state(enigo::Key::Shift);
                 let command = get_key_state(enigo::Key::Meta);
@@ -283,13 +258,7 @@ impl Handler {
                     Key::ControlLeft => {
                         // when pressing AltGr, an extra VK_LCONTROL with a special
                         // scancode with bit 9 set is sent, let's ignore this.
-                        #[cfg(windows)]
-                        if evt.scan_code & 0x200 != 0 {
-                            unsafe {
-                                IS_ALT_GR = true;
-                            }
-                            return;
-                        }
+                        
                         Some(ControlKey::Control)
                     }
                     Key::ControlRight => Some(ControlKey::RControl),
@@ -796,13 +765,8 @@ impl Handler {
         }
     }
 
-    fn get_path_sep(&mut self, is_remote: bool) -> &'static str {
-        let p = self.get_platform(is_remote);
-        if &p == "Windows" {
-            return "\\";
-        } else {
-            return "/";
-        }
+    fn get_path_sep(&mut self, is_remote: bool) -> &'static str { // TODO: inline
+        return "/";
     }
 
     fn get_icon_path(&mut self, file_type: i32, ext: String) -> String {
@@ -810,9 +774,6 @@ impl Handler {
         if file_type == FileType::DirLink as i32 {
             let new_path = path.join("dir_link");
             if !std::fs::metadata(&new_path).is_ok() {
-                #[cfg(windows)]
-                allow_err!(std::os::windows::fs::symlink_file(&path, &new_path));
-                #[cfg(not(windows))]
                 allow_err!(std::os::unix::fs::symlink(&path, &new_path));
             }
             path = new_path;
@@ -832,25 +793,9 @@ impl Handler {
                 if !std::fs::metadata(&path).is_ok() {
                     allow_err!(std::fs::File::create(&path));
                 }
-                #[cfg(windows)]
-                allow_err!(std::os::windows::fs::symlink_file(&path, &new_path));
-                #[cfg(not(windows))]
                 allow_err!(std::os::unix::fs::symlink(&path, &new_path));
             }
             path = new_path;
-        } else if file_type == FileType::DirDrive as i32 {
-            if cfg!(windows) {
-                path = fs::get_path("C:");
-            } else if cfg!(target_os = "macos") {
-                if let Ok(entries) = fs::get_path("/Volumes/").read_dir() {
-                    for entry in entries {
-                        if let Ok(entry) = entry {
-                            path = entry.path();
-                            break;
-                        }
-                    }
-                }
-            }
         }
         fs::get_string(&path)
     }
@@ -965,44 +910,7 @@ impl Handler {
                 _ => {}
             }
         } else {
-            if cfg!(target_os = "macos") {
-                match code {
-                    0x4C => key_event.set_control_key(ControlKey::NumpadEnter), // numpad enter
-                    0x69 => key_event.set_control_key(ControlKey::Snapshot),
-                    0x72 => key_event.set_control_key(ControlKey::Help),
-                    0x6E => key_event.set_control_key(ControlKey::Apps),
-                    0x47 => {
-                        key_event.set_control_key(if self.peer_platform() == "Mac OS" {
-                            ControlKey::Clear
-                        } else {
-                            ControlKey::NumLock
-                        });
-                    }
-                    0x51 => key_event.set_control_key(ControlKey::Equals),
-                    0x2F => key_event.set_chr('.' as _),
-                    0x32 => key_event.set_chr('`' as _),
-                    _ => {
-                        log::error!("Unknown key code {}", code);
-                        return None;
-                    }
-                }
-            } else if cfg!(windows) {
-                match code {
-                    0x2C => key_event.set_control_key(ControlKey::Snapshot),
-                    0x91 => key_event.set_control_key(ControlKey::Scroll),
-                    0x90 => key_event.set_control_key(ControlKey::NumLock),
-                    0x5C => key_event.set_control_key(ControlKey::RWin),
-                    0x5B => key_event.set_control_key(ControlKey::Meta),
-                    0x5D => key_event.set_control_key(ControlKey::Apps),
-                    0xBE => key_event.set_chr('.' as _),
-                    0xC0 => key_event.set_chr('`' as _),
-                    _ => {
-                        log::error!("Unknown key code {}", code);
-                        return None;
-                    }
-                }
-            } else if cfg!(target_os = "linux") {
-                match code {
+            match code {
                     65300 => key_event.set_control_key(ControlKey::Scroll),
                     65421 => key_event.set_control_key(ControlKey::NumpadEnter), // numpad enter
                     65407 => key_event.set_control_key(ControlKey::NumLock),
@@ -1039,7 +947,7 @@ impl Handler {
                         log::error!("Unknown key code {}", code);
                         return None;
                     }
-                }
+                
             } else {
                 log::error!("Unknown key code {}", code);
                 return None;
@@ -1063,15 +971,9 @@ impl Handler {
     }
 
     fn ctrl_alt_del(&mut self) {
-        if self.peer_platform() == "Windows" {
-            let mut key_event = KeyEvent::new();
-            key_event.set_control_key(ControlKey::CtrlAltDel);
-            self.key_down_or_up(1, key_event, false, false, false, false);
-        } else {
-            let mut key_event = KeyEvent::new();
-            key_event.set_control_key(ControlKey::Delete);
-            self.key_down_or_up(3, key_event, true, true, false, false);
-        }
+        let mut key_event = KeyEvent::new();
+        key_event.set_control_key(ControlKey::Delete);
+        self.key_down_or_up(3, key_event, true, true, false, false);
     }
 
     fn lock_screen(&mut self) {
@@ -1284,8 +1186,6 @@ async fn io_loop(handler: Handler) {
         timer: time::interval(SEC30),
         last_update_jobs_status: (Instant::now(), Default::default()),
         first_frame: false,
-        #[cfg(windows)]
-        clipboard_file_context: None,
     };
     remote.io_loop().await;
 }
@@ -1325,8 +1225,6 @@ struct Remote {
     timer: Interval,
     last_update_jobs_status: (Instant, HashMap<i32, u64>),
     first_frame: bool,
-    #[cfg(windows)]
-    clipboard_file_context: Option<Box<CliprdrClientContext>>,
 }
 
 impl Remote {
@@ -1349,10 +1247,7 @@ impl Remote {
                     .call("setConnectionType", &make_args!(peer.is_secured(), direct));
 
                 // just build for now
-                #[cfg(not(windows))]
                 let (_tx_holder, mut rx_clip_client) = mpsc::unbounded_channel::<i32>();
-                #[cfg(windows)]
-                let mut rx_clip_client = get_rx_clip_client().lock().await;
 
                 loop {
                     tokio::select! {
@@ -1385,15 +1280,7 @@ impl Remote {
                             }
                         }
                         _msg = rx_clip_client.recv() => {
-                            #[cfg(windows)]
-                            match _msg {
-                                Some((_, clip)) => {
-                                    allow_err!(peer.send(&clip_2_msg(clip)).await);
-                                }
-                                None => {
-                                    // unreachable!()
-                                }
-                            }
+                            // TODO: invest impact
                         }
                         _ = self.timer.tick() => {
                             if last_recv_time.elapsed() >= SEC30 {
@@ -1771,16 +1658,6 @@ impl Remote {
                         update_clipboard(cb, Some(&self.old_clipboard));
                     }
                 }
-                #[cfg(windows)]
-                Some(message::Union::cliprdr(clip)) => {
-                    if !self.handler.lc.read().unwrap().disable_clipboard {
-                        if let Some(context) = &mut self.clipboard_file_context {
-                            if let Some(clip) = msg_2_clip(clip) {
-                                server_clip_file(context, 0, clip);
-                            }
-                        }
-                    }
-                }
                 Some(message::Union::file_response(fr)) => match fr.union {
                     Some(file_response::Union::dir(fd)) => {
                         let entries = fd.entries.to_vec();
@@ -1895,34 +1772,6 @@ impl Remote {
         }
         true
     }
-
-    fn check_clipboard_file_context(&mut self) {
-        #[cfg(windows)]
-        {
-            let enabled = unsafe { SERVER_FILE_TRANSFER_ENABLED }
-                && self.handler.lc.read().unwrap().enable_file_transfer;
-            if enabled == self.clipboard_file_context.is_none() {
-                self.clipboard_file_context = if enabled {
-                    match create_clipboard_file_context(true, false) {
-                        Ok(context) => {
-                            log::info!("clipboard context for file transfer created.");
-                            Some(context)
-                        }
-                        Err(err) => {
-                            log::error!(
-                                "Create clipboard context for file transfer: {}",
-                                err.to_string()
-                            );
-                            None
-                        }
-                    }
-                } else {
-                    log::info!("clipboard context for file transfer destroyed.");
-                    None
-                };
-            }
-        }
-    }
 }
 
 fn make_fd(id: i32, entries: &Vec<FileEntry>, only_count: bool) -> Value {
@@ -2017,16 +1866,6 @@ impl Interface for Handler {
             self.call2("closeSuccess", &make_args!());
         } else if !self.is_port_forward() {
             self.msgbox("success", "Successful", "Connected, waiting for image...");
-        }
-        #[cfg(windows)]
-        {
-            let mut path = std::env::temp_dir();
-            path.push(&self.id);
-            let path = path.with_extension(config::APP_NAME.to_lowercase());
-            std::fs::File::create(&path).ok();
-            if let Some(path) = path.to_str() {
-                crate::platform::windows::add_recent_document(&path);
-            }
         }
         self.start_keyboard_hook();
     }

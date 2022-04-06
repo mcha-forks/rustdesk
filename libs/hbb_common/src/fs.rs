@@ -5,33 +5,12 @@ use crate::{
     compress::{compress, decompress},
     config::{Config, COMPRESS_LEVEL},
 };
-#[cfg(windows)]
-use std::os::windows::prelude::*;
-use tokio::{fs::File, io::*};
 
 pub fn read_dir(path: &PathBuf, include_hidden: bool) -> ResultType<FileDirectory> {
     let mut dir = FileDirectory {
         path: get_string(&path),
         ..Default::default()
     };
-    #[cfg(windows)]
-    if "/" == &get_string(&path) {
-        let drives = unsafe { winapi::um::fileapi::GetLogicalDrives() };
-        for i in 0..32 {
-            if drives & (1 << i) != 0 {
-                let name = format!(
-                    "{}:",
-                    std::char::from_u32('A' as u32 + i as u32).unwrap_or('A')
-                );
-                dir.entries.push(FileEntry {
-                    name,
-                    entry_type: FileType::DirDrive.into(),
-                    ..Default::default()
-                });
-            }
-        }
-        return Ok(dir);
-    }
     for entry in path.read_dir()? {
         if let Ok(entry) = entry {
             let p = entry.path();
@@ -50,12 +29,7 @@ pub fn read_dir(path: &PathBuf, include_hidden: bool) -> ResultType<FileDirector
             } else {
                 continue;
             }
-            // docs.microsoft.com/en-us/windows/win32/fileio/file-attribute-constants
-            #[cfg(windows)]
-            if meta.file_attributes() & 0x2 != 0 {
-                is_hidden = true;
-            }
-            #[cfg(not(windows))]
+            
             if name.find('.').unwrap_or(usize::MAX) == 0 {
                 is_hidden = true;
             }

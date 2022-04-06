@@ -1,18 +1,5 @@
-// Specify the Windows subsystem to eliminate console window.
-// Requires Rust 1.18.
-//#![windows_subsystem = "windows"]
-
 use hbb_common::log;
 use rustdesk::*;
-
-#[cfg(any(target_os = "android", target_os = "ios"))]
-fn main() {
-    common::test_rendezvous_server();
-    common::test_nat_type();
-    #[cfg(target_os = "android")]
-    crate::common::check_software_update();
-    mobile::Session::start("");
-}
 
 #[cfg(not(any(target_os = "android", target_os = "ios", feature = "cli")))]
 fn main() {
@@ -60,22 +47,6 @@ fn main() {
     if args.is_empty() {
         std::thread::spawn(move || start_server(false, false));
     } else {
-        #[cfg(windows)]
-        {
-            if args[0] == "--uninstall" {
-                if let Err(err) = platform::uninstall_me() {
-                    log::error!("Failed to uninstall: {}", err);
-                }
-                return;
-            } else if args[0] == "--update" {
-                hbb_common::allow_err!(platform::update_me());
-                return;
-            } else if args[0] == "--reinstall" {
-                hbb_common::allow_err!(platform::uninstall_me());
-                hbb_common::allow_err!(platform::install_me("desktopicon startmenu",));
-                return;
-            }
-        }
         if args[0] == "--remove" {
             if args.len() == 2 {
                 // sleep a while so that process of removed exe exit
@@ -115,7 +86,7 @@ fn main() {
     );
     let matches = App::new("rustdesk")
         .version(crate::VERSION)
-        .author("CarrieZ Studio<info@rustdesk.com>")
+        .author("CarrieZ Studio <info@rustdesk.com>")
         .about("RustDesk command line tool")
         .args_from_usage(&args)
         .get_matches();

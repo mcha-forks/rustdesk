@@ -1,6 +1,4 @@
 use super::{input_service::*, *};
-#[cfg(windows)]
-use crate::clipboard_file::*;
 use crate::{common::update_clipboard, ipc};
 use hbb_common::{
     config::Config,
@@ -251,12 +249,6 @@ impl Connection {
                         }
                         ipc::Data::RawMessage(bytes) => {
                             allow_err!(conn.stream.send_raw(bytes).await);
-                        }
-                        ipc::Data::ClipbaordFile(_clip) => {
-                            if conn.file_transfer_enabled() {
-                                #[cfg(windows)]
-                                allow_err!(conn.stream.send(&clip_2_msg(_clip)).await);
-                            }
                         }
                         _ => {}
                     }
@@ -562,10 +554,6 @@ impl Connection {
         }
         #[allow(unused_mut)]
         let mut sas_enabled = false;
-        #[cfg(windows)]
-        if crate::platform::is_root() {
-            sas_enabled = true;
-        }
         if self.file_transfer.is_some() {
             if crate::platform::is_prelogin() || self.tx_to_cm.send(ipc::Data::Test).is_err() {
                 username = "".to_owned();
@@ -850,10 +838,7 @@ impl Connection {
                 }
                 Some(message::Union::cliprdr(_clip)) => {
                     if self.file_transfer_enabled() {
-                        #[cfg(windows)]
-                        if let Some(clip) = msg_2_clip(_clip) {
-                            self.send_to_cm(ipc::Data::ClipbaordFile(clip))
-                        }
+                        // TODO: invest impact                    
                     }
                 }
                 Some(message::Union::file_action(fa)) => {
@@ -1016,13 +1001,6 @@ impl Connection {
                 }
             }
         }
-        #[cfg(windows)]
-        if let Ok(q) = o.enable_file_transfer.enum_value() {
-            if q != BoolOption::NotSet {
-                self.enable_file_transfer = q == BoolOption::Yes;
-                self.send_to_cm(ipc::Data::ClipboardFileEnabled(self.file_transfer_enabled()));
-            }
-        }
         if let Ok(q) = o.disable_clipboard.enum_value() {
             if q != BoolOption::NotSet {
                 self.disable_clipboard = q == BoolOption::Yes;
@@ -1176,12 +1154,3 @@ async fn start_ipc(
     }
 }
 
-// in case screen is sleep and blank, here to activate it
-fn try_activate_screen() {
-    #[cfg(windows)]
-    std::thread::spawn(|| {
-        mouse_move_relative(-6, -6);
-        std::thread::sleep(std::time::Duration::from_millis(30));
-        mouse_move_relative(6, 6);
-    });
-}

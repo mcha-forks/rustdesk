@@ -40,36 +40,15 @@ struct UIHostHandler;
 pub fn start(args: &mut [String]) {
     // https://github.com/c-smile/sciter-sdk/blob/master/include/sciter-x-types.h
     // https://github.com/rustdesk/rustdesk/issues/132#issuecomment-886069737
-    #[cfg(windows)]
-    allow_err!(sciter::set_options(sciter::RuntimeOptions::GfxLayer(
-        sciter::GFX_LAYER::WARP
-    )));
-    #[cfg(windows)]
-    if args.len() > 0 && args[0] == "--tray" {
-        let mut res;
-        // while switching from prelogin to user screen, start_tray may fails,
-        // so we try more times
-        loop {
-            res = start_tray();
-            if res.is_ok() {
-                log::info!("tray started with username {}", crate::username());
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_secs(1));
-        }
-        allow_err!(res);
-        return;
-    }
+
     use sciter::SCRIPT_RUNTIME_FEATURES::*;
     allow_err!(sciter::set_options(sciter::RuntimeOptions::ScriptFeatures(
         ALLOW_FILE_IO as u8 | ALLOW_SOCKET_IO as u8 | ALLOW_EVAL as u8 | ALLOW_SYSINFO as u8
     )));
+
     let mut frame = sciter::WindowBuilder::main_window().create();
-    #[cfg(windows)]
-    allow_err!(sciter::set_options(sciter::RuntimeOptions::UxTheming(true)));
     frame.set_title(APP_NAME);
-    #[cfg(target_os = "macos")]
-    macos::make_menubar();
+    
     let page;
     if args.len() > 1 && args[0] == "--play" {
         args[0] = "--connect".to_owned();
@@ -142,50 +121,6 @@ pub fn start(args: &mut [String]) {
     frame.run_app();
 }
 
-#[cfg(windows)]
-fn start_tray() -> hbb_common::ResultType<()> {
-    let mut app = systray::Application::new()?;
-    let icon = include_bytes!("./tray-icon.ico");
-    app.set_icon_from_buffer(icon, 32, 32).unwrap();
-    app.add_menu_item("Open Window", |_| {
-        crate::run_me(Vec::<&str>::new()).ok();
-        Ok::<_, systray::Error>(())
-    })?;
-    let options = check_connect_status(false).1;
-    let idx_stopped = Arc::new(Mutex::new((0, 0)));
-    app.set_timer(std::time::Duration::from_millis(1000), move |app| {
-        let stopped = if let Some(v) = options.lock().unwrap().get("stop-service") {
-            !v.is_empty()
-        } else {
-            false
-        };
-        let stopped = if stopped { 2 } else { 1 };
-        let mut old = *idx_stopped.lock().unwrap();
-        if stopped != old.1 {
-            if old.0 > 0 {
-                app.remove_menu_item(old.0)
-            }
-            if stopped == 1 {
-                old.0 = app.add_menu_item("Stop Service", |_| {
-                    ipc::set_option("stop-service", "Y");
-                    Ok::<_, systray::Error>(())
-                })?;
-            } else {
-                old.0 = app.add_menu_item("Start Service", |_| {
-                    ipc::set_option("stop-service", "");
-                    Ok::<_, systray::Error>(())
-                })?;
-            }
-            old.1 = stopped;
-            *idx_stopped.lock().unwrap() = old;
-        }
-        Ok::<_, systray::Error>(())
-    })?;
-    allow_err!(app.wait_for_message());
-
-    Ok(())
-}
-
 impl UI {
     fn new(childs: Childs) -> Self {
         let res = check_connect_status(true);
@@ -226,19 +161,8 @@ impl UI {
         Config::set_remote_id(&id);
     }
 
-    fn goto_install(&mut self) {
-        allow_err!(crate::run_me(vec!["--install"]));
-    }
-
-    fn install_me(&mut self, _options: String) {
-        #[cfg(windows)]
-        std::thread::spawn(move || {
-            allow_err!(crate::platform::windows::install_me(&_options));
-            std::process::exit(0);
-        });
-    }
-
     fn update_me(&self, _path: String) {
+        // TODO: Redirect to release page specificed in build config (aur, apt:// scheme, etc.)
         #[cfg(target_os = "linux")]
         {
             std::process::Command::new("pkexec")
@@ -247,20 +171,6 @@ impl UI {
                 .ok();
             std::fs::remove_file(&_path).ok();
             crate::run_me(Vec::<&str>::new()).ok();
-        }
-        #[cfg(windows)]
-        {
-            let mut path = _path;
-            if path.is_empty() {
-                if let Ok(tmp) = std::env::current_exe() {
-                    path = tmp.to_string_lossy().to_string();
-                }
-            }
-            std::process::Command::new(path)
-                .arg("--update")
-                .spawn()
-                .ok();
-            std::process::exit(0);
         }
     }
 
@@ -315,22 +225,8 @@ impl UI {
 
     fn get_sound_inputs(&self) -> Value {
         let mut a = Value::array(0);
-        #[cfg(windows)]
-        {
-            let inputs = Arc::new(Mutex::new(Vec::new()));
-            let cloned = inputs.clone();
-            // can not call below in UI thread, because conflict with sciter sound com initialization
-            std::thread::spawn(move || *cloned.lock().unwrap() = get_sound_inputs())
-                .join()
-                .ok();
-            for name in inputs.lock().unwrap().drain(..) {
-                a.push(name);
-            }
-        }
-        #[cfg(not(windows))]
         for name in get_sound_inputs() {
             a.push(name);
-        }
         a
     }
 
@@ -365,29 +261,6 @@ impl UI {
         }
     }
 
-    // TODO: ui prompt
-    fn install_virtual_display(&self) {
-        let mut reboot_required = false;
-        match virtual_display::install_update_driver(&mut reboot_required) {
-            Ok(_) => {
-                log::info!(
-                    "Virtual Display: install virtual display done, reboot is {} required",
-                    if reboot_required { "" } else { "not" }
-                );
-            }
-            Err(e) => {
-                log::error!("Virtual Display: install virtual display failed {}", e);
-            }
-        }
-    }
-
-    fn install_path(&mut self) -> String {
-        #[cfg(windows)]
-        return crate::platform::windows::get_install_info().1;
-        #[cfg(not(windows))]
-        return "".to_owned();
-    }
-
     fn get_socks(&self) -> Value {
         let s = ipc::get_socks();
         match s {
@@ -409,22 +282,6 @@ impl UI {
             password,
         })
         .ok();
-    }
-
-    fn is_installed(&mut self) -> bool {
-        crate::platform::is_installed()
-    }
-
-    fn is_installed_lower_version(&self) -> bool {
-        #[cfg(not(windows))]
-        return false;
-        #[cfg(windows)]
-        {
-            let installed_version = crate::platform::windows::get_installed_version();
-            let a = hbb_common::get_version_number(crate::VERSION);
-            let b = hbb_common::get_version_number(&installed_version);
-            return a > b;
-        }
     }
 
     fn save_size(&mut self, x: i32, y: i32, w: i32, h: i32) {
@@ -527,65 +384,22 @@ impl UI {
         }
     }
 
-    fn is_process_trusted(&mut self, _prompt: bool) -> bool {
-        #[cfg(target_os = "macos")]
-        return crate::platform::macos::is_process_trusted(_prompt);
-        #[cfg(not(target_os = "macos"))]
-        return true;
-    }
-
-    fn is_can_screen_recording(&mut self, _prompt: bool) -> bool {
-        #[cfg(target_os = "macos")]
-        return crate::platform::macos::is_can_screen_recording(_prompt);
-        #[cfg(not(target_os = "macos"))]
-        return true;
-    }
-
-    fn is_installed_daemon(&mut self, _prompt: bool) -> bool {
-        #[cfg(target_os = "macos")]
-        return crate::platform::macos::is_installed_daemon(_prompt);
-        #[cfg(not(target_os = "macos"))]
-        return true;
-    }
-
     fn get_error(&mut self) -> String {
-        #[cfg(target_os = "linux")]
-        {
-            let dtype = crate::platform::linux::get_display_server();
-            if "wayland" == dtype {
-                return "".to_owned();
-            }
-            if dtype != "x11" {
-                return format!("Unsupported display server type {}, x11 expected!", dtype);
-            }
+        let dtype = crate::platform::linux::get_display_server();
+        if "wayland" == dtype {
+            return "".to_owned();
         }
-        return "".to_owned();
+        if dtype != "x11" {
+            return format!("Unsupported display server type {}, x11 expected!", dtype);
+        }
     }
 
     fn is_login_wayland(&mut self) -> bool {
-        #[cfg(target_os = "linux")]
         return crate::platform::linux::is_login_wayland();
-        #[cfg(not(target_os = "linux"))]
-        return false;
-    }
-
-    fn fix_login_wayland(&mut self) {
-        #[cfg(target_os = "linux")]
-        return crate::platform::linux::fix_login_wayland();
     }
 
     fn current_is_wayland(&mut self) -> bool {
-        #[cfg(target_os = "linux")]
         return crate::platform::linux::current_is_wayland();
-        #[cfg(not(target_os = "linux"))]
-        return false;
-    }
-
-    fn modify_default_login(&mut self) -> String {
-        #[cfg(target_os = "linux")]
-        return crate::platform::linux::modify_default_login();
-        #[cfg(not(target_os = "linux"))]
-        return "".to_owned();
     }
 
     fn get_software_update_url(&self) -> String {
@@ -604,34 +418,6 @@ impl UI {
         APP_NAME.to_owned()
     }
 
-    fn get_software_ext(&self) -> String {
-        #[cfg(windows)]
-        let p = "exe";
-        #[cfg(target_os = "macos")]
-        let p = "dmg";
-        #[cfg(target_os = "linux")]
-        let p = "deb";
-        p.to_owned()
-    }
-
-    fn get_software_store_path(&self) -> String {
-        let mut p = std::env::temp_dir();
-        let name = SOFTWARE_UPDATE_URL
-            .lock()
-            .unwrap()
-            .split("/")
-            .last()
-            .map(|x| x.to_owned())
-            .unwrap_or(APP_NAME.to_owned());
-        p.push(name);
-        format!("{}.{}", p.to_string_lossy(), self.get_software_ext())
-    }
-
-    fn create_shortcut(&self, _id: String) {
-        #[cfg(windows)]
-        crate::platform::windows::create_shortcut(&_id).ok();
-    }
-
     fn discover(&self) {
         std::thread::spawn(move || {
             allow_err!(crate::rendezvous_mediator::discover());
@@ -643,10 +429,6 @@ impl UI {
     }
 
     fn open_url(&self, url: String) {
-        #[cfg(windows)]
-        let p = "explorer";
-        #[cfg(target_os = "macos")]
-        let p = "open";
         #[cfg(target_os = "linux")]
         let p = "xdg-open";
         allow_err!(std::process::Command::new(p).arg(url).spawn());
@@ -661,7 +443,7 @@ impl UI {
     }
 }
 
-impl sciter::EventHandler for UI {
+impl sciter::EventHandler for UI { // TODO: check unneed functions
     sciter::dispatch_script_call! {
         fn t(String);
         fn is_xfce();
@@ -798,25 +580,6 @@ async fn check_connect_status_(
     }
 }
 
-#[cfg(not(target_os = "linux"))]
-fn get_sound_inputs() -> Vec<String> {
-    let mut out = Vec::new();
-    use cpal::traits::{DeviceTrait, HostTrait};
-    let host = cpal::default_host();
-    if let Ok(devices) = host.devices() {
-        for device in devices {
-            if device.default_input_config().is_err() {
-                continue;
-            }
-            if let Ok(name) = device.name() {
-                out.push(name);
-            }
-        }
-    }
-    out
-}
-
-#[cfg(target_os = "linux")]
 fn get_sound_inputs() -> Vec<String> {
     crate::platform::linux::get_pa_sources()
         .drain(..)

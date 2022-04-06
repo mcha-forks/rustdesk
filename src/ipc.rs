@@ -16,7 +16,6 @@ use parity_tokio_ipc::{
 };
 use serde_derive::{Deserialize, Serialize};
 use std::collections::HashMap;
-#[cfg(not(windows))]
 use std::{fs::File, io::prelude::*};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -143,7 +142,6 @@ pub async fn start(postfix: &str) -> ResultType<()> {
 
 pub async fn new_listener(postfix: &str) -> ResultType<Incoming> {
     let path = Config::ipc_path(postfix);
-    #[cfg(not(windows))]
     check_pid(postfix).await;
     let mut endpoint = Endpoint::new(path.clone());
     match SecurityAttributes::allow_everyone_create() {
@@ -153,7 +151,6 @@ pub async fn new_listener(postfix: &str) -> ResultType<Incoming> {
     match endpoint.incoming() {
         Ok(incoming) => {
             log::info!("Started ipc{} server at path: {}", postfix, &path);
-            #[cfg(not(windows))]
             {
                 use std::os::unix::fs::PermissionsExt;
                 std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o0777)).ok();
@@ -309,13 +306,11 @@ pub async fn connect(ms_timeout: u64, postfix: &str) -> ResultType<ConnectionTmp
 }
 
 #[inline]
-#[cfg(not(windows))]
 fn get_pid_file(postfix: &str) -> String {
     let path = Config::ipc_path(postfix);
     format!("{}.pid", path)
 }
 
-#[cfg(not(windows))]
 async fn check_pid(postfix: &str) {
     let pid_file = get_pid_file(postfix);
     if let Ok(mut file) = File::open(&pid_file) {
@@ -342,7 +337,6 @@ async fn check_pid(postfix: &str) {
 }
 
 #[inline]
-#[cfg(not(windows))]
 fn write_pid(postfix: &str) {
     let path = get_pid_file(postfix);
     if let Ok(mut file) = File::create(&path) {
@@ -582,63 +576,3 @@ pub async fn set_socks(value: config::Socks5Server) -> ResultType<()> {
         .await?;
     Ok(())
 }
-
-/*
-static mut SHARED_MEMORY: *mut i64 = std::ptr::null_mut();
-
-pub fn initialize_shared_memory(create: bool) {
-    let mut shmem_flink = "shared-memory".to_owned();
-    if cfg!(windows) {
-        let df = "C:\\ProgramData";
-        let df = if std::path::Path::new(df).exists() {
-            df.to_owned()
-        } else {
-            std::env::var("TEMP").unwrap_or("C:\\Windows\\TEMP".to_owned())
-        };
-        let df = format!("{}\\{}", df, *hbb_common::config::APP_NAME.read().unwrap());
-        std::fs::create_dir(&df).ok();
-        shmem_flink = format!("{}\\{}", df, shmem_flink);
-    } else {
-        shmem_flink = Config::ipc_path("").replace("ipc", "") + &shmem_flink;
-    }
-    use shared_memory::*;
-    let shmem = if create {
-        match ShmemConf::new()
-            .force_create_flink()
-            .size(16)
-            .flink(&shmem_flink)
-            .create()
-        {
-            Err(ShmemError::LinkExists) => ShmemConf::new().flink(&shmem_flink).open(),
-            Ok(m) => Ok(m),
-            Err(e) => Err(e),
-        }
-    } else {
-        ShmemConf::new().flink(&shmem_flink).open()
-    };
-    if create {
-        set_all_perm(&shmem_flink);
-    }
-    match shmem {
-        Ok(shmem) => unsafe {
-            SHARED_MEMORY = shmem.as_ptr() as *mut i64;
-            std::mem::forget(shmem);
-        },
-        Err(err) => {
-            log::error!(
-                "Unable to create or open shmem flink {} : {}",
-                shmem_flink,
-                err
-            );
-        }
-    }
-}
-
-fn set_all_perm(p: &str) {
-    #[cfg(not(windows))]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o0777)).ok();
-    }
-}
-*/

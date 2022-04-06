@@ -143,28 +143,6 @@ mod cpal_impl {
         send_f32(data, encoder, sp);
     }
 
-    #[cfg(windows)]
-    fn get_device() -> ResultType<(Device, SupportedStreamConfig)> {
-        let audio_input = Config::get_option("audio-input");
-        if !audio_input.is_empty() {
-            return get_audio_input(&audio_input);
-        }
-        let device = HOST
-            .default_output_device()
-            .with_context(|| "Failed to get default output device for loopback")?;
-        log::info!(
-            "Default output device: {}",
-            device.name().unwrap_or("".to_owned())
-        );
-        let format = device
-            .default_output_config()
-            .map_err(|e| anyhow!(e))
-            .with_context(|| "Failed to get default output format")?;
-        log::info!("Default output format: {:?}", format);
-        Ok((device, format))
-    }
-
-    #[cfg(not(windows))]
     fn get_device() -> ResultType<(Device, SupportedStreamConfig)> {
         let audio_input = Config::get_option("audio-input");
         get_audio_input(&audio_input)

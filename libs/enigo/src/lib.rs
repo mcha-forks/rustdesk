@@ -53,21 +53,8 @@
 //! ```
 #![deny(missing_docs)]
 
-#[cfg(target_os = "macos")]
-#[macro_use]
-extern crate objc;
-
 // TODO(dustin) use interior mutability not &mut self
 
-#[cfg(target_os = "windows")]
-mod win;
-#[cfg(target_os = "windows")]
-pub use win::Enigo;
-
-#[cfg(target_os = "macos")]
-mod macos;
-#[cfg(target_os = "macos")]
-pub use macos::Enigo;
 
 #[cfg(target_os = "linux")]
 mod linux;

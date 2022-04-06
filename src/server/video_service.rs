@@ -228,10 +228,7 @@ fn run(sp: GenericService) -> ResultType<()> {
     let mut crc = (0, 0);
     let start = time::Instant::now();
     let mut last_check_displays = time::Instant::now();
-    #[cfg(windows)]
-    let mut try_gdi = 1;
-    #[cfg(windows)]
-    log::info!("gdi: {}", c.is_gdi());
+
     while sp.ok() {
         if *SWITCH.lock().unwrap() {
             bail!("SWITCH");
@@ -243,12 +240,7 @@ fn run(sp: GenericService) -> ResultType<()> {
         if get_image_quality() != q {
             bail!("SWITCH");
         }
-        #[cfg(windows)]
-        {
-            if crate::platform::windows::desktop_changed() {
-                bail!("Desktop changed");
-            }
-        }
+
         let now = time::Instant::now();
         if last_check_displays.elapsed().as_millis() > 1000 {
             last_check_displays = now;
@@ -268,25 +260,12 @@ fn run(sp: GenericService) -> ResultType<()> {
                 let ms = (time.as_secs() * 1000 + time.subsec_millis() as u64) as i64;
                 let send_conn_ids = handle_one_frame(&sp, &frame, ms, &mut crc, &mut vpx)?;
                 frame_controller.set_send(now, send_conn_ids);
-                #[cfg(windows)]
-                {
-                    try_gdi = 0;
-                }
             }
             Err(ref e) if e.kind() == WouldBlock => {
                 // https://github.com/NVIDIA/video-sdk-samples/tree/master/nvEncDXGIOutputDuplicationSample
                 wait = WAIT_BASE - now.elapsed().as_millis() as i32;
                 if wait < 0 {
                     wait = 0
-                }
-                #[cfg(windows)]
-                if try_gdi > 0 && !c.is_gdi() {
-                    if try_gdi > 3 {
-                        c.set_gdi();
-                        try_gdi = 0;
-                        log::info!("No image, fall back to gdi");
-                    }
-                    try_gdi += 1;
                 }
                 continue;
             }

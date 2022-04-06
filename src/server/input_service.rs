@@ -193,20 +193,6 @@ pub fn is_left_up(evt: &MouseEvent) -> bool {
     return buttons == 1 && evt_type == 2;
 }
 
-#[cfg(windows)]
-pub fn mouse_move_relative(x: i32, y: i32) {
-    crate::platform::windows::try_change_desktop();
-    let mut en = ENIGO.lock().unwrap();
-    en.mouse_move_relative(x, y);
-}
-
-#[cfg(not(target_os = "macos"))]
-fn modifier_sleep() {
-    // sleep for a while, this is only for keying in rdp in peer so far
-    #[cfg(windows)]
-    std::thread::sleep(std::time::Duration::from_nanos(1));
-}
-
 #[inline]
 fn get_modifier_state(key: Key, en: &mut Enigo) -> bool {
     // https://github.com/rustdesk/rustdesk/issues/332
@@ -305,11 +291,6 @@ fn fix_modifier(
     en: &mut Enigo,
 ) {
     if get_modifier_state(key1, en) && !modifiers.contains(&ProtobufEnumOrUnknown::new(key0)) {
-        #[cfg(windows)]
-        if key0 == ControlKey::Control && get_modifier_state(Key::Alt, en) {
-            // AltGr case
-            return;
-        }
         en.key_up(key1);
         log::debug!("Fixed {:?}", key1);
     }
@@ -346,8 +327,6 @@ fn handle_mouse_(evt: &MouseEvent, conn: i32) {
     if EXITING.load(Ordering::SeqCst) {
         return;
     }
-    #[cfg(windows)]
-    crate::platform::windows::try_change_desktop();
     let buttons = evt.mask >> 3;
     let evt_type = evt.mask & 0x7;
     if evt_type == 0 {
@@ -355,17 +334,11 @@ fn handle_mouse_(evt: &MouseEvent, conn: i32) {
         *LATEST_INPUT.lock().unwrap() = Input { time, conn };
     }
     let mut en = ENIGO.lock().unwrap();
-    #[cfg(not(target_os = "macos"))]
     let mut to_release = Vec::new();
     if evt_type == 1 {
         fix_modifiers(&evt.modifiers[..], &mut en, 0);
-        #[cfg(target_os = "macos")]
-        en.reset_flag();
         for ref ck in evt.modifiers.iter() {
             if let Some(key) = KEY_MAP.get(&ck.value()) {
-                #[cfg(target_os = "macos")]
-                en.add_flag(key);
-                #[cfg(not(target_os = "macos"))]
                 if key != &Key::CapsLock && key != &Key::NumLock {
                     if !get_modifier_state(key.clone(), &mut en) {
                         en.key_down(key.clone()).ok();
@@ -409,7 +382,6 @@ fn handle_mouse_(evt: &MouseEvent, conn: i32) {
             let mut x = evt.x;
             #[allow(unused_mut)]
             let mut y = evt.y;
-            #[cfg(not(windows))]
             {
                 x = -x;
                 y = -y;
@@ -549,21 +521,9 @@ fn handle_key_(evt: &KeyEvent) {
     if EXITING.load(Ordering::SeqCst) {
         return;
     }
-    #[cfg(windows)]
-    crate::platform::windows::try_change_desktop();
     let mut en = ENIGO.lock().unwrap();
-    // disable numlock if press home etc when numlock is on,
-    // because we will get numpad value (7,8,9 etc) if not
-    #[cfg(windows)]
-    let mut disable_numlock = false;
-    #[cfg(target_os = "macos")]
-    en.reset_flag();
-    #[cfg(not(target_os = "macos"))]
     let mut to_release = Vec::new();
-    #[cfg(not(target_os = "macos"))]
     let mut has_cap = false;
-    #[cfg(windows)]
-    let mut has_numlock = false;
     if evt.down {
         let ck = if let Some(key_event::Union::control_key(ck)) = evt.union {
             ck.value()
@@ -573,7 +533,6 @@ fn handle_key_(evt: &KeyEvent) {
         fix_modifiers(&evt.modifiers[..], &mut en, ck);
         for ref ck in evt.modifiers.iter() {
             if let Some(key) = KEY_MAP.get(&ck.value()) {
-                #[cfg(target_os = "linux")]
                 if key == &Key::Alt && !get_modifier_state(key.clone(), &mut en) {
                     // for AltGr on Linux
                     if KEYS_DOWN
@@ -585,51 +544,28 @@ fn handle_key_(evt: &KeyEvent) {
                         continue;
                     }
                 }
-                #[cfg(target_os = "macos")]
-                en.add_flag(key);
-                #[cfg(not(target_os = "macos"))]
-                {
-                    if key == &Key::CapsLock {
-                        has_cap = true;
-                    } else if key == &Key::NumLock {
-                        #[cfg(windows)]
-                        {
-                            has_numlock = true;
-                        }
-                    } else {
-                        if !get_modifier_state(key.clone(), &mut en) {
-                            en.key_down(key.clone()).ok();
-                            modifier_sleep();
-                            to_release.push(key);
-                        }
+
+                if key == &Key::CapsLock {
+                    has_cap = true;
+                } else {
+                    if !get_modifier_state(key.clone(), &mut en) {
+                        en.key_down(key.clone()).ok();
+                        modifier_sleep();
+                        to_release.push(key);
                     }
                 }
             }
         }
     }
-    #[cfg(not(target_os = "macos"))]
+
     if has_cap != en.get_key_state(Key::CapsLock) {
         en.key_down(Key::CapsLock).ok();
         en.key_up(Key::CapsLock);
     }
-    #[cfg(windows)]
-    if crate::common::valid_for_numlock(evt) {
-        if has_numlock != en.get_key_state(Key::NumLock) {
-            en.key_down(Key::NumLock).ok();
-            en.key_up(Key::NumLock);
-        }
-    }
+
     match evt.union {
         Some(key_event::Union::control_key(ck)) => {
             if let Some(key) = KEY_MAP.get(&ck.value()) {
-                #[cfg(windows)]
-                if let Some(_) = NUMPAD_KEY_MAP.get(&ck.value()) {
-                    disable_numlock = en.get_key_state(Key::NumLock);
-                    if disable_numlock {
-                        en.key_down(Key::NumLock).ok();
-                        en.key_up(Key::NumLock);
-                    }
-                }
                 if evt.down {
                     allow_err!(en.key_down(key.clone()));
                     KEYS_DOWN
@@ -675,14 +611,8 @@ fn handle_key_(evt: &KeyEvent) {
         }
         _ => {}
     }
-    #[cfg(not(target_os = "macos"))]
     for key in to_release {
         en.key_up(key.clone());
-    }
-    #[cfg(windows)]
-    if disable_numlock {
-        en.key_down(Key::NumLock).ok();
-        en.key_up(Key::NumLock);
     }
 }
 

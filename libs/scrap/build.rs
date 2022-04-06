@@ -47,9 +47,6 @@ pub fn main() {
 
             // Set libname.
             if statik {
-                #[cfg(target_os = "windows")]
-                println!("cargo:rustc-link-lib=static=libvpx");
-                #[cfg(not(target_os = "windows"))]
                 println!("cargo:rustc-link-lib=static=vpx");
             } else {
                 println!("cargo:rustc-link-lib=vpx");
@@ -75,20 +72,7 @@ pub fn main() {
 
     println!("cargo:rustc-link-lib=yuv");
 
-    let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap();
-
-    if target_os == "android" || target_os == "ios" {
-        // nothing
-    } else if cfg!(windows) {
-        // The first choice is Windows because DXGI is amazing.
-        println!("cargo:rustc-cfg=dxgi");
-    } else if cfg!(target_os = "macos") {
-        // Quartz is second because macOS is the (annoying) exception.
-        println!("cargo:rustc-cfg=quartz");
-    } else if cfg!(unix) {
-        // On UNIX we pray that X11 (with XCB) is available.
-        println!("cargo:rustc-cfg=x11");
-    }
+    println!("cargo:rustc-cfg=x11");
 }
 
 // This function was modified from pkg-config-rs and should have same behavior.
